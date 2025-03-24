@@ -1,0 +1,178 @@
+name: Main Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release Version (optional)'
+        required: false
+        type: string
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    outputs:
+      build_date: ${{ steps.set_outputs.outputs.build_date }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build --if-present
+      - run: npm test
+
+      - name: Set outputs
+        id: set_outputs
+        run: echo "build_date=$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ matrix.node-version }}
+          path: .
+          retention-days: 1
+
+  docker-build:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    outputs:
+      image_tags: ${{ steps.save_tags.outputs.all_tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ matrix.node-version }}
+          path: .
+
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-app:node${{ matrix.node-version }} .
+
+      - name: Tag Docker Image
+        run: |
+          BUILD_DATE=${{ needs.build.outputs.build_date }}
+          IMAGE_TAG=node${{ matrix.node-version }}-$BUILD_DATE
+          docker tag my-app:node${{ matrix.node-version }} my-app:$IMAGE_TAG
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Save image tag
+        id: save_tags
+        run: |
+          echo "${{ matrix.node-version }}=my-app:${{ steps.tag_docker.outputs.image_tag }}" >> image_tags.txt
+          cat image_tags.txt
+          echo "all_tags=$(cat image_tags.txt | tr '\n' ',' | sed 's/,$//')" >> $GITHUB_OUTPUT
+
+      - name: Upload Docker Image Tags
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-tags-${{ matrix.node-version }}
+          path: image_tags.txt
+          retention-days: 1
+
+  deploy-to-ecr:
+    needs: docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ROLE_NAME }}
+
+      - name: Login to ECR
+        id: login-ecr
+        run: |
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+      - name: Download All Docker Tags
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-tags-*
+          path: docker-tags
+
+      - name: Push Images to ECR
+        run: |
+          cd docker-tags
+          for tag_file in *; do
+            while IFS= read -r line; do
+              node_version=$(echo $line | cut -d= -f1)
+              image_tag=$(echo $line | cut -d= -f2)
+
+              echo "Pushing $image_tag to ECR..."
+              docker tag $image_tag ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/my-app:$image_tag
+              docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/my-app:$image_tag
+            done < "$tag_file"
+          done
+
+          # Push latest tag for the preferred Node version (e.g., 20.x)
+          latest_tag=$(grep "20.x=" */docker-tags-20.x | cut -d= -f2)
+          if [ -n "$latest_tag" ]; then
+            docker tag $latest_tag ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/my-app:latest
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/my-app:latest
+          fi
+
+  create-release:
+    needs: [build, docker-build]
+    if: github.event.inputs.release_version != ''
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download All Docker Tags
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-tags-*
+          path: docker-tags
+
+      - name: Prepare Release Notes
+        run: |
+          echo "# Release v${{ github.event.inputs.release_version }}" > RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "## Docker Images" >> RELEASE_NOTES.md
+
+          cd docker-tags
+          for tag_file in *; do
+            while IFS= read -r line; do
+              echo "- $line" >> ../RELEASE_NOTES.md
+            done < "$tag_file"
+          done
+
+          echo "" >> ../RELEASE_NOTES.md
+          echo "## Changes" >> ../RELEASE_NOTES.md
+          echo "- Add your changes here" >> ../RELEASE_NOTES.md
+
+          cat ../RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.release_version }}
+          name: Release v${{ github.event.inputs.release_version }}
+          body_path: RELEASE_NOTES.md
+          draft: true
+          prerelease: false
