@@ -14,9 +14,10 @@ on:
       environment:
         description: 'Deployment environment'
         required: true
-        default: 'staging'
+        default: 'development'
         type: choice
         options:
+          - development
           - staging
           - production
 
@@ -36,7 +37,7 @@ jobs:
         fetch-depth: 0
 
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
@@ -54,23 +55,29 @@ jobs:
       run: npm run build
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: build-output
+        name: build-output-${{ matrix.node-version }}
         path: dist/
         retention-days: 5
+        compression-level: 9 # maximum compression
+        if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
 
   test-e2e:
     needs: build
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Download build artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
-        name: build-output
+        name: build-output-${{ matrix.node-version }}
         path: dist/
 
     - name: Setup test environment
@@ -85,7 +92,7 @@ jobs:
       run: npm run generate-reports
 
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results
         path: reports/
