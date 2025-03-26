@@ -102,6 +102,9 @@ jobs:
       runs-on: ubuntu-latest
 
       steps:
+        - name: Checkout Repository
+          uses: actions/checkout@v4
+
         - name: Configure AWS Credentials
           uses: aws-actions/configure-aws-credentials@v4
           with:
@@ -118,28 +121,34 @@ jobs:
           with:
             pattern: docker-tags-*
             path: docker-tags
+            merge-multiple: true
+
+        - name: Debug - List Downloaded Artifacts
+          run: |
+            ls -la docker-tags
+            cat docker-tags/* || echo "No files found"
 
         - name: Push Images to ECR
           run: |
-            for tag_file in docker-tags/docker-tags-*; do
-              if [ -f "$tag_file" ]; then
-                while IFS= read -r line; do
-                  node_version=$(echo "$line" | cut -d= -f1)
-                  image_tag=$(echo "$line" | cut -d= -f2)
+            # Rebuild Docker images from Dockerfile
+            docker build -t my-app:18.x --build-arg NODE_VERSION=18 .
+            docker build -t my-app:20.x --build-arg NODE_VERSION=20 .
+            docker build -t my-app:22.x --build-arg NODE_VERSION=22 .
 
-                  echo "Pushing $image_tag to ECR..."
-                  docker tag "$image_tag" "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$node_version"
-                  docker push "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$node_version"
-                done < "$tag_file"
-              fi
+            # Tag and push images
+            for node_version in 18.x 20.x 22.x; do
+              echo "Processing Node.js version: $node_version"
+              
+              # Tag image for ECR
+              docker tag my-app:$node_version ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$node_version
+              
+              # Push image to ECR
+              docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$node_version
             done
 
-            # Push latest tag for the preferred Node version (e.g., 20.x)
-            latest_tag=$(grep "20.x=" docker-tags/docker-tags-20.x | cut -d= -f2)
-            if [ -n "$latest_tag" ]; then
-              docker tag "$latest_tag" "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest"
-              docker push "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest"
-            fi
+            # Push latest tag (using 20.x as preferred version)
+            docker tag my-app:20.x ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
 
   create-release:
     needs: [build, docker-build]
