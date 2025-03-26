@@ -1,13 +1,13 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  # Scheduled runs (e.g., nightly builds)
-  schedule:
-    - cron: '0 0 * * *'  # Runs at midnight daily
+  # push:
+  #   branches: [ main ]
+  # pull_request:
+  #   branches: [ main ]
+  # # Scheduled runs (e.g., nightly builds)
+  # schedule:
+  #   - cron: '0 0 * * *'  # Runs at midnight daily
   # Manual trigger option
   workflow_dispatch:
     inputs:
