@@ -122,22 +122,26 @@ jobs:
       - name: Push Images to ECR
         run: |
           cd docker-tags
-          for tag_file in *; do
-            while IFS= read -r line; do
-              node_version=$(echo $line | cut -d= -f1)
-              image_tag=$(echo $line | cut -d= -f2)
 
-              echo "Pushing $image_tag to ECR..."
-              docker tag $image_tag ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$image_tag
-              docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$image_tag
-            done < "$tag_file"
+          # Find and process tag files
+          for tag_file in docker-tags-*; do
+            if [ -f "$tag_file" ]; then
+              while IFS= read -r line; do
+                node_version=$(echo "$line" | cut -d= -f1)
+                image_tag=$(echo "$line" | cut -d= -f2)
+
+                echo "Pushing $image_tag to ECR..."
+                docker tag "$image_tag" "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$image_tag"
+                docker push "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:$image_tag"
+              done < "$tag_file"
+            fi
           done
 
           # Push latest tag for the preferred Node version (e.g., 20.x)
-          latest_tag=$(grep "20.x=" */docker-tags-20.x | cut -d= -f2)
+          latest_tag=$(grep "20.x=" docker-tags-20.x | cut -d= -f2)
           if [ -n "$latest_tag" ]; then
-            docker tag $latest_tag ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
-            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
+            docker tag "$latest_tag" "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest"
+            docker push "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest"
           fi
 
   create-release:
