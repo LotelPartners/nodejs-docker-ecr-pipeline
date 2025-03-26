@@ -9,6 +9,8 @@ on:
         type: string
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ "main" ]
 
@@ -150,44 +152,44 @@ jobs:
             docker tag my-app:20.x ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
             docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-south-2.amazonaws.com/my-app:latest
 
-  create-release:
-    needs: [build, docker-build]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    create-release:
+        needs: [build, docker-build]
+        if: |
+          github.event_name == 'push' &&
+          startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+        steps:
+          - uses: actions/checkout@v4
 
-      - name: Download All Docker Tags
-        uses: actions/download-artifact@v4
-        with:
-          pattern: docker-tags-*
-          path: docker-tags
+          - name: Download All Docker Tags
+            uses: actions/download-artifact@v4
+            with:
+              pattern: docker-tags-*
+              path: docker-tags
 
-      - name: Prepare Release Notes
-        run: |
-          echo "# Release v${{ github.event.inputs.release_version }}" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "## Docker Images" >> RELEASE_NOTES.md
+          - name: Prepare Release Notes
+            run: |
+              echo "# Release ${{ github.ref_name }}" > RELEASE_NOTES.md
+              echo "" >> RELEASE_NOTES.md
+              echo "## Docker Images" >> RELEASE_NOTES.md
 
-          cd docker-tags
-          for tag_file in *; do
-            while IFS= read -r line; do
-              echo "- $line" >> ../RELEASE_NOTES.md
-            done < "$tag_file"
-          done
+              cd docker-tags
+              for tag_file in *; do
+                while IFS= read -r line; do
+                  echo "- $line" >> ../RELEASE_NOTES.md
+                done < "$tag_file"
+              done
 
-          echo "" >> ../RELEASE_NOTES.md
-          echo "## Changes" >> ../RELEASE_NOTES.md
-          echo "- Add your changes here" >> ../RELEASE_NOTES.md
+              echo "" >> ../RELEASE_NOTES.md
+              echo "## Changes" >> ../RELEASE_NOTES.md
+              echo "- Automated release for tag ${{ github.ref_name }}" >> ../RELEASE_NOTES.md
 
-          cat ../RELEASE_NOTES.md
+              cat ../RELEASE_NOTES.md
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.event.inputs.release_version }}
-          name: Release v${{ github.event.inputs.release_version }}
-          body_path: RELEASE_NOTES.md
-          draft: true
-          prerelease: false
+          - name: Create GitHub Release
+            uses: actions/create-release@v1
+            with:
+              body_file: RELEASE_NOTES.md
+              draft: false
+              prerelease: false
