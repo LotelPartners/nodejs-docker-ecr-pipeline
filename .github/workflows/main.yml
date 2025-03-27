@@ -194,3 +194,4 @@ jobs:
               $(cat ../RELEASE_NOTES.md)
             draft: true
             prerelease: true
+            token: ${{ secrets.APP_GITHUB_TOKEN }}
